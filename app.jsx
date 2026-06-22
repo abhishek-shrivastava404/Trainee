@@ -555,45 +555,248 @@ function AriesTrainer() {
         )}
 
         {/* ── HISTORY ── */}
-        {tab===2 && (
-          <div>
-            <div style={{ fontSize:11, color:"#444", marginBottom:14 }}>Last 7 days. Green = hit target. Yellow = getting there. Red = missed.</div>
-            <div style={{ background:"#111", border:"1px solid #1c1c1c", borderRadius:12, padding:14, marginBottom:10 }}>
-              <BarChart data={getLast7Days("calories")} targetLine={MACROS_TARGET.calories} label="Calories (kcal)"/>
-              <BarChart data={getLast7Days("protein")} targetLine={MACROS_TARGET.protein} label="Protein (g)"/>
-            </div>
-            <div style={{ background:"#111", border:"1px solid #1c1c1c", borderRadius:12, padding:14, marginBottom:10 }}>
-              <BarChart data={getLast7Days("carbs")} targetLine={MACROS_TARGET.carbs} label="Carbs (g)"/>
-              <BarChart data={getLast7Days("fat")} targetLine={MACROS_TARGET.fat} label="Fat (g)"/>
-            </div>
-            <div style={{ fontSize:10, color:"#444", textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>Daily Log</div>
-            {Object.entries(history).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,14).map(([key,day])=>{
-              const d = new Date(key+"T00:00:00");
-              const lbl = key===todayKey?"Today":d.toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"});
-              const cp = pct(day.calories||0,MACROS_TARGET.calories);
-              const pp = pct(day.protein||0,MACROS_TARGET.protein);
-              return (
-                <div key={key} style={{ background:"#111", border:"1px solid #1c1c1c", borderRadius:10, padding:11, marginBottom:7 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
-                    <span style={{ fontWeight:600, fontSize:13, color:key===todayKey?"#3ecf8e":"#ccc" }}>{lbl}</span>
-                    <span style={{ fontSize:11, color:"#444" }}>{Math.round(day.calories||0)} kcal · {Math.round(day.protein||0)}g pro</span>
+        {tab===2 && (()=>{
+          const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+          const now = new Date();
+
+          // Get all years present in history
+          const allYears = [...new Set(Object.keys(history).map(k=>k.slice(0,4)))].sort((a,b)=>b-a);
+          const [histView, setHistView] = useState("week"); // week | month | year
+          const [selYear, setSelYear] = useState(String(now.getFullYear()));
+          const [selMonth, setSelMonth] = useState(now.getMonth()); // 0-indexed
+
+          // --- WEEK DATA (last 7 days) ---
+          const weekData = Array.from({length:7},(_,i)=>{
+            const d = new Date(); d.setDate(d.getDate()-(6-i));
+            const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            return { label:["Su","Mo","Tu","We","Th","Fr","Sa"][d.getDay()], key, value:Math.round(history[key]?.protein||0), cal:Math.round(history[key]?.calories||0), isToday:key===todayKey };
+          });
+
+          // --- MONTH DATA (all days in selected month) ---
+          const daysInMonth = new Date(parseInt(selYear), selMonth+1, 0).getDate();
+          const monthData = Array.from({length:daysInMonth},(_,i)=>{
+            const day = i+1;
+            const key = `${selYear}-${String(selMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+            return { label:String(day), key, value:Math.round(history[key]?.protein||0), cal:Math.round(history[key]?.calories||0), isToday:key===todayKey };
+          });
+          const monthLoggedDays = monthData.filter(d=>d.value>0).length;
+          const monthProHit = monthData.filter(d=>d.value>=80).length;
+          const monthAvgCal = monthData.filter(d=>d.cal>0).length ? Math.round(monthData.filter(d=>d.cal>0).reduce((a,d)=>a+d.cal,0)/monthData.filter(d=>d.cal>0).length) : 0;
+
+          // --- YEAR DATA (monthly averages) ---
+          const yearData = MONTH_NAMES.map((m,mi)=>{
+            const prefix = `${selYear}-${String(mi+1).padStart(2,'0')}`;
+            const days = Object.entries(history).filter(([k])=>k.startsWith(prefix));
+            const avgPro = days.length ? Math.round(days.reduce((a,[,v])=>a+(v.protein||0),0)/days.length) : 0;
+            const avgCal = days.length ? Math.round(days.reduce((a,[,v])=>a+(v.calories||0),0)/days.length) : 0;
+            const isCurrent = mi===now.getMonth() && selYear===String(now.getFullYear());
+            return { label:m, value:avgPro, cal:avgCal, days:days.length, isToday:isCurrent };
+          });
+
+          // Mini bar chart for month view (compact)
+          const MiniBar = ({data, target, color}) => {
+            const maxV = Math.max(...data.map(d=>d.value), target, 1);
+            const bw = data.length > 20 ? 7 : 11;
+            const gap = data.length > 20 ? 2 : 3;
+            const totalW = data.length * (bw+gap);
+            return (
+              <svg width="100%" viewBox={`0 0 ${totalW} 60`} style={{overflow:"visible", display:"block"}}>
+                <line x1={0} y1={50-(target/maxV)*50} x2={totalW} y2={50-(target/maxV)*50} stroke={color} strokeWidth="0.8" strokeDasharray="3,2" opacity="0.4"/>
+                {data.map((d,i)=>{
+                  const bh = Math.max(1,(d.value/maxV)*50);
+                  const y = 50-bh;
+                  const bc = d.value>=target?"#3ecf8e":d.value>=(target*0.6)?"#f59e0b":d.value>0?"#ef4444":"#1a1a1a";
+                  return <rect key={i} x={i*(bw+gap)} y={y} width={bw} height={bh} fill={bc} rx="1.5" opacity={d.isToday?1:0.7}/>;
+                })}
+              </svg>
+            );
+          };
+
+          return (
+            <div>
+              {/* View toggle */}
+              <div style={{display:"flex", gap:6, marginBottom:14}}>
+                {["week","month","year"].map(v=>(
+                  <button key={v} onClick={()=>setHistView(v)} style={{
+                    flex:1, padding:"8px 0", background:histView===v?"#3ecf8e":"#111",
+                    color:histView===v?"#000":"#444", border:"1px solid #1c1c1c",
+                    borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer", textTransform:"capitalize"
+                  }}>{v==="week"?"7 Days":v==="month"?"Monthly":"Yearly"}</button>
+                ))}
+              </div>
+
+              {/* WEEK VIEW */}
+              {histView==="week" && (
+                <div>
+                  <div style={{background:"#111", border:"1px solid #1c1c1c", borderRadius:12, padding:14, marginBottom:10}}>
+                    <BarChart data={weekData.map(d=>({...d,value:d.cal}))} targetLine={MACROS_TARGET.calories} label="Calories — Last 7 Days"/>
+                    <BarChart data={weekData} targetLine={MACROS_TARGET.protein} label="Protein — Last 7 Days"/>
                   </div>
-                  <div style={{ display:"flex", gap:6 }}>
-                    {[{label:"Cal",p:cp,c:"#3ecf8e"},{label:"Pro",p:pp,c:"#7c6af7"}].map(m=>(
-                      <div key={m.label} style={{ flex:1 }}>
-                        <div style={{ fontSize:9, color:"#444", marginBottom:2 }}>{m.label} {m.p}%</div>
-                        <div style={{ height:4, background:"#1a1a1a", borderRadius:2, overflow:"hidden" }}>
-                          <div style={{ height:"100%", width:`${m.p}%`, background:m.p>=90?m.c:m.p>=60?"#f59e0b":"#ef4444", borderRadius:2 }}/>
+                  <div style={{fontSize:10, color:"#444", textTransform:"uppercase", letterSpacing:1, marginBottom:8}}>Daily Detail</div>
+                  {weekData.slice().reverse().map(d=>{
+                    const cp = pct(d.cal, MACROS_TARGET.calories);
+                    const pp = pct(d.value, MACROS_TARGET.protein);
+                    return (
+                      <div key={d.key} style={{background:"#111", border:`1px solid ${d.isToday?"#1a3326":"#1c1c1c"}`, borderRadius:10, padding:11, marginBottom:7}}>
+                        <div style={{display:"flex", justifyContent:"space-between", marginBottom:6}}>
+                          <span style={{fontWeight:600, fontSize:13, color:d.isToday?"#3ecf8e":"#ccc"}}>
+                            {d.isToday?"Today":new Date(d.key+"T00:00:00").toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"})}
+                          </span>
+                          <span style={{fontSize:11, color:"#444"}}>{d.cal>0?`${d.cal} kcal · ${d.value}g pro`:"—"}</span>
                         </div>
+                        {d.cal>0 && <div style={{display:"flex", gap:6}}>
+                          {[{label:"Cal",p:cp,c:"#3ecf8e"},{label:"Pro",p:pp,c:"#7c6af7"}].map(m=>(
+                            <div key={m.label} style={{flex:1}}>
+                              <div style={{fontSize:9, color:"#444", marginBottom:2}}>{m.label} {m.p}%</div>
+                              <div style={{height:4, background:"#1a1a1a", borderRadius:2, overflow:"hidden"}}>
+                                <div style={{height:"100%", width:`${m.p}%`, background:m.p>=90?m.c:m.p>=60?"#f59e0b":"#ef4444", borderRadius:2}}/>
+                              </div>
+                            </div>
+                          ))}
+                        </div>}
+                        {d.cal===0 && <div style={{fontSize:11, color:"#2a2a2a"}}>Nothing logged</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* MONTH VIEW */}
+              {histView==="month" && (
+                <div>
+                  {/* Month + Year selector */}
+                  <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12}}>
+                    <button onClick={()=>{
+                      let m=selMonth-1, y=parseInt(selYear);
+                      if(m<0){m=11;y--;}
+                      setSelMonth(m); setSelYear(String(y));
+                    }} style={{background:"#111", border:"1px solid #1c1c1c", color:"#ccc", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:16}}>‹</button>
+                    <div style={{fontWeight:700, fontSize:15, color:"#f0f0f0"}}>{MONTH_NAMES[selMonth]} {selYear}</div>
+                    <button onClick={()=>{
+                      let m=selMonth+1, y=parseInt(selYear);
+                      if(m>11){m=0;y++;}
+                      setSelMonth(m); setSelYear(String(y));
+                    }} style={{background:"#111", border:"1px solid #1c1c1c", color:"#ccc", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:16}}>›</button>
+                  </div>
+
+                  {/* Month stats */}
+                  <div style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:12}}>
+                    {[
+                      {label:"Days Logged", val:monthLoggedDays, color:"#3ecf8e"},
+                      {label:"Protein Hit", val:monthProHit, color:"#7c6af7"},
+                      {label:"Avg Calories", val:monthAvgCal, color:"#f59e0b"},
+                    ].map(s=>(
+                      <div key={s.label} style={{background:"#111", border:"1px solid #1c1c1c", borderRadius:10, padding:"10px 8px", textAlign:"center"}}>
+                        <div style={{fontSize:18, fontWeight:700, color:s.color}}>{s.val}{s.label==="Avg Calories"?" kcal":""}</div>
+                        <div style={{fontSize:9, color:"#444", textTransform:"uppercase", letterSpacing:0.5, marginTop:2}}>{s.label}</div>
                       </div>
                     ))}
                   </div>
+
+                  {/* Protein bar chart for month */}
+                  <div style={{background:"#111", border:"1px solid #1c1c1c", borderRadius:12, padding:14, marginBottom:12}}>
+                    <div style={{fontSize:10, color:"#555", textTransform:"uppercase", letterSpacing:1, marginBottom:8}}>Protein (g) — Each Day</div>
+                    <MiniBar data={monthData} target={MACROS_TARGET.protein} color="#7c6af7"/>
+                    <div style={{display:"flex", justifyContent:"space-between", fontSize:9, color:"#444", marginTop:4}}>
+                      <span>1</span><span>{Math.ceil(daysInMonth/2)}</span><span>{daysInMonth}</span>
+                    </div>
+                  </div>
+
+                  {/* Calendar-style dots */}
+                  <div style={{background:"#111", border:"1px solid #1c1c1c", borderRadius:12, padding:14, marginBottom:10}}>
+                    <div style={{fontSize:10, color:"#555", textTransform:"uppercase", letterSpacing:1, marginBottom:10}}>Daily Status</div>
+                    <div style={{display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:5, textAlign:"center"}}>
+                      {["S","M","T","W","T","F","S"].map((d,i)=><div key={i} style={{fontSize:9, color:"#444", marginBottom:4}}>{d}</div>)}
+                      {Array.from({length:new Date(parseInt(selYear),selMonth,1).getDay()}).map((_,i)=><div key={"e"+i}/>)}
+                      {monthData.map((d,i)=>{
+                        const bc = d.value>=90?"#3ecf8e":d.value>=54?"#f59e0b":d.value>0?"#ef4444":"#1a1a1a";
+                        const border = d.isToday?"2px solid #3ecf8e":"2px solid transparent";
+                        return (
+                          <div key={i} style={{aspectRatio:"1", borderRadius:"50%", background:bc, border, display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, color:d.value>0?"#000":"#333", fontWeight:700}}>
+                            {d.label}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{display:"flex", gap:10, marginTop:10, justifyContent:"center"}}>
+                      {[{c:"#3ecf8e",l:"Hit"},{c:"#f59e0b",l:"Partial"},{c:"#ef4444",l:"Missed"},{c:"#1a1a1a",l:"No log"}].map(x=>(
+                        <div key={x.l} style={{display:"flex", alignItems:"center", gap:4}}>
+                          <div style={{width:8, height:8, borderRadius:"50%", background:x.c}}/>
+                          <span style={{fontSize:9, color:"#555"}}>{x.l}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              );
-            })}
-            {Object.keys(history).length===0&&<div style={{ color:"#2a2a2a", fontSize:13, textAlign:"center", padding:"30px 0" }}>No history yet. Start logging.</div>}
-          </div>
-        )}
+              )}
+
+              {/* YEAR VIEW */}
+              {histView==="year" && (
+                <div>
+                  {/* Year selector */}
+                  <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12}}>
+                    <button onClick={()=>setSelYear(y=>String(parseInt(y)-1))} style={{background:"#111", border:"1px solid #1c1c1c", color:"#ccc", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:16}}>‹</button>
+                    <div style={{fontWeight:700, fontSize:15, color:"#f0f0f0"}}>{selYear} Overview</div>
+                    <button onClick={()=>setSelYear(y=>String(parseInt(y)+1))} style={{background:"#111", border:"1px solid #1c1c1c", color:"#ccc", padding:"6px 12px", borderRadius:8, cursor:"pointer", fontSize:16}}>›</button>
+                  </div>
+
+                  {/* Year stats */}
+                  {(()=>{
+                    const loggedDays = Object.keys(history).filter(k=>k.startsWith(selYear)).length;
+                    const proHitDays = Object.entries(history).filter(([k,v])=>k.startsWith(selYear)&&(v.protein||0)>=80).length;
+                    const consistency = loggedDays>0?Math.round((proHitDays/Math.max(loggedDays,1))*100):0;
+                    return (
+                      <div style={{display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:14}}>
+                        {[
+                          {label:"Days Logged", val:loggedDays, color:"#3ecf8e"},
+                          {label:"Protein Hit", val:proHitDays, color:"#7c6af7"},
+                          {label:"Consistency", val:consistency+"%", color:"#f59e0b"},
+                        ].map(s=>(
+                          <div key={s.label} style={{background:"#111", border:"1px solid #1c1c1c", borderRadius:10, padding:"10px 8px", textAlign:"center"}}>
+                            <div style={{fontSize:18, fontWeight:700, color:s.color}}>{s.val}</div>
+                            <div style={{fontSize:9, color:"#444", textTransform:"uppercase", letterSpacing:0.5, marginTop:2}}>{s.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Monthly avg protein chart */}
+                  <div style={{background:"#111", border:"1px solid #1c1c1c", borderRadius:12, padding:14, marginBottom:12}}>
+                    <div style={{fontSize:10, color:"#555", textTransform:"uppercase", letterSpacing:1, marginBottom:8}}>Avg Protein/Day by Month</div>
+                    <BarChart data={yearData} targetLine={MACROS_TARGET.protein} label=""/>
+                  </div>
+
+                  {/* Monthly breakdown list */}
+                  <div style={{fontSize:10, color:"#444", textTransform:"uppercase", letterSpacing:1, marginBottom:8}}>Month by Month</div>
+                  {yearData.filter(m=>m.days>0).map((m,i)=>{
+                    const pp = pct(m.value, MACROS_TARGET.protein);
+                    const cp = pct(m.cal, MACROS_TARGET.calories);
+                    return (
+                      <div key={i} style={{background:"#111", border:`1px solid ${m.isToday?"#1a3326":"#1c1c1c"}`, borderRadius:10, padding:11, marginBottom:7}}>
+                        <div style={{display:"flex", justifyContent:"space-between", marginBottom:6}}>
+                          <span style={{fontWeight:700, fontSize:13, color:m.isToday?"#3ecf8e":"#ccc"}}>{m.label} {selYear}</span>
+                          <span style={{fontSize:11, color:"#444"}}>{m.days} days · avg {m.value}g pro</span>
+                        </div>
+                        <div style={{display:"flex", gap:6}}>
+                          {[{label:"Avg Cal",p:cp,c:"#3ecf8e"},{label:"Avg Pro",p:pp,c:"#7c6af7"}].map(x=>(
+                            <div key={x.label} style={{flex:1}}>
+                              <div style={{fontSize:9, color:"#444", marginBottom:2}}>{x.label} {x.p}%</div>
+                              <div style={{height:4, background:"1a1a1a", borderRadius:2, overflow:"hidden"}}>
+                                <div style={{height:"100%", width:`${x.p}%`, background:x.p>=90?x.c:x.p>=60?"#f59e0b":"#ef4444", borderRadius:2}}/>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {yearData.every(m=>m.days===0)&&<div style={{color:"#2a2a2a", fontSize:13, textAlign:"center", padding:"30px 0"}}>No data for {selYear} yet.</div>}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── COACH ── */}
         {tab===3 && (
