@@ -38,7 +38,7 @@ When user asks fitness questions:
 
 Keep responses concise and practical.`;
 
-const MACROS_TARGET = { calories: 2700, protein: 90, carbs: 350, fat: 70 };
+const MACROS_TARGET = { calories: 2700, protein: 100, carbs: 350, fat: 70 };
 const TABS = ["🍽 Log", "📊 Today", "📈 History", "💬 Coach", "💪 Workout"];
 
 const WORKOUT_PLAN = {
