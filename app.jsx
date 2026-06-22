@@ -1,0 +1,670 @@
+const { useState, useEffect, useRef } = React;
+
+
+const SYSTEM_PROMPT = `You are Aries's personal fitness and nutrition coach. Here is his full profile:
+
+- Age: 20, Male, 172 cm, 49-50 kg, Ectomorph
+- Goal: Lean bulk to 55-60 kg, wider shoulders, bigger arms, back width, chest thickness
+- Diet: Vegetarian, student budget, hostel life with limited cooking
+- Supplements: Creatine 4g/day, soy protein powder
+- Daily protein target: 80-100g
+- Daily calorie target: ~2500-2800 kcal (lean bulk surplus)
+- Equipment: Pull-up bar, resistance bands, backpack (10-15 kg), bodyweight
+- Current lifts: 10 pull-ups, 5 weighted pull-ups, pike push-ups, Mike Tyson push-ups
+- Skill goals: Handstand, kip-up
+- Sleep: 11 PM - 6/7 AM
+- History of excessive soreness and cramps during kip-up (hamstrings, calves, lower back)
+
+TRAINING PRINCIPLES:
+- Never encourage overtraining or training to failure every set
+- Progressive overload, consistency > intensity
+- Recovery is critical
+- Muscles grow from food + sleep + training
+- Low bodyweight is currently the biggest limitation, not lack of effort
+
+NUTRITION CONTEXT:
+- Common foods: soy chunks, milk, soy protein powder, sattu, peanut butter, dal, chickpeas, bananas, mess food (rice, roti, sabji, dal)
+- Creatine 4g/day already taken
+
+When user logs food, estimate ONLY the macros for THAT specific food item logged (not the entire day).
+Give a short honest coaching note (1-2 lines max). Be casual, real, like a friend who knows fitness.
+
+When user asks fitness questions:
+- Be direct, practical, evidence-based
+- Fit advice to his hostel/limited equipment context
+- Never sugarcoat, never hype unrealistically
+- Remind him that food + sleep = gains, not just training
+- Use casual language, talk like a real coach not a bot
+
+Keep responses concise and practical.`;
+
+const MACROS_TARGET = { calories: 2700, protein: 90, carbs: 350, fat: 70 };
+const TABS = ["🍽 Log", "📊 Today", "📈 History", "💬 Coach", "💪 Workout"];
+
+const WORKOUT_PLAN = {
+  Push: {
+    day: "Push Day 🔥",
+    emoji: "🏋️",
+    focus: "Chest · Shoulders · Triceps",
+    exercises: [
+      { name: "Pike Push-ups", sets: "3", reps: "8-12", note: "Shoulders priority", emoji: "🔼" },
+      { name: "Wide Push-ups", sets: "3", reps: "12-15", note: "Chest width", emoji: "↔️" },
+      { name: "Mike Tyson Push-ups", sets: "3", reps: "6-10", note: "Full chest stretch", emoji: "🥊" },
+      { name: "Elevated Push-ups", sets: "3", reps: "10-12", note: "Upper chest", emoji: "📐" },
+      { name: "Triceps Pushdowns (Band)", sets: "3", reps: "15", note: "Arm thickness", emoji: "💪" },
+      { name: "Overhead Triceps Ext (Band)", sets: "3", reps: "12", note: "Long head", emoji: "☝️" },
+    ]
+  },
+  Pull: {
+    day: "Pull Day 🦅",
+    emoji: "🔙",
+    focus: "Back · Biceps · Rear Delts",
+    exercises: [
+      { name: "Weighted Pull-ups", sets: "4", reps: "4-6", note: "Backpack 10-15 kg", emoji: "🎒" },
+      { name: "Wide Pull-ups", sets: "3", reps: "6-8", note: "Lat width", emoji: "🦅" },
+      { name: "Archer Pulls", sets: "3", reps: "4-6 each", note: "Unilateral strength", emoji: "🏹" },
+      { name: "Backpack Rows", sets: "3", reps: "12-15", note: "Mid-back thickness", emoji: "🎒" },
+      { name: "Face Pulls (Band)", sets: "3", reps: "15", note: "Rear delt + posture", emoji: "😤" },
+      { name: "Dead Hang", sets: "3", reps: "30-60 sec", note: "Grip + decompression", emoji: "🙌" },
+    ]
+  },
+  Legs: {
+    day: "Legs Day ⚡",
+    emoji: "🦵",
+    focus: "Quads · Hamstrings · Calves",
+    exercises: [
+      { name: "Bulgarian Split Squats", sets: "3", reps: "10 each", note: "Backpack loaded", emoji: "🎒" },
+      { name: "Weighted Squats", sets: "3", reps: "12-15", note: "Backpack loaded", emoji: "⬇️" },
+      { name: "Lunges", sets: "3", reps: "10 each", note: "Control the descent", emoji: "🚶" },
+      { name: "Calf Raises", sets: "4", reps: "20", note: "Slow and controlled", emoji: "👟" },
+      { name: "Wall Sit", sets: "3", reps: "45-60 sec", note: "Isometric hold", emoji: "🧱" },
+    ]
+  },
+  Skills: {
+    day: "Skills Day 🤸",
+    emoji: "🌀",
+    focus: "Handstand · Kip-up · Core",
+    exercises: [
+      { name: "Kip-up Practice", sets: "10 min", reps: "—", note: "Focus timing, not power", emoji: "🌀" },
+      { name: "Handstand Kick-up", sets: "5-8", reps: "attempts", note: "Wall for support", emoji: "🤸" },
+      { name: "Handstand Hold (Wall)", sets: "5", reps: "15-30 sec", note: "Build time under tension", emoji: "⏱" },
+      { name: "L-sit Hold", sets: "3", reps: "10-15 sec", note: "Core control", emoji: "🪑" },
+    ]
+  }
+};
+
+const WEEK_SCHEDULE = ["Push", "Pull", "Legs", "Skills", "Push", "Pull", "Rest"];
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// Daily motivations — rotates by day of year, personalized to Aries
+const DAILY_MOTIVATIONS = [
+  { text: "49 kg is just your starting weight. Every gram of protein today is a step toward 55.", tag: "BULK MODE" },
+  { text: "Pull-ups are your superpower. Today, feed the muscle that makes them happen.", tag: "STRENGTH" },
+  { text: "Handstand won't happen by wishing. 10 minutes of practice today = skill in 3 months.", tag: "SKILL UP" },
+  { text: "Ectomorphs don't get a pass on eating. If you're not gaining, you're not eating enough.", tag: "REALITY CHECK" },
+  { text: "The kip-up is 40% done. Timing, not strength. Trust the process.", tag: "PROGRESS" },
+  { text: "Wider shoulders come from pike push-ups done consistently. Not from wishing.", tag: "FOCUS" },
+  { text: "Sleep tonight = muscle tomorrow. Don't scroll till 2 AM and wonder why gains are slow.", tag: "RECOVERY" },
+  { text: "Creatine is loaded. Protein is your job. Hit 90g today — no excuses.", tag: "NUTRITION" },
+  { text: "You have a pull-up bar. That's all you need to build a V-taper. Use it.", tag: "GRIND" },
+  { text: "Consistency beats intensity. Showing up today matters more than the perfect workout.", tag: "MINDSET" },
+  { text: "Soy chunks + dal + milk = your budget cheat code for protein. Stack it.", tag: "HACK" },
+  { text: "Weighted pull-ups at 20 with bodyweight training? You're already ahead. Keep building.", tag: "PERSPECTIVE" },
+  { text: "Your back is improving. Wide pull-ups today will show in 4 weeks.", tag: "LONG GAME" },
+  { text: "Don't train to failure every set. Leave 2 reps in the tank. That's how you grow.", tag: "SMART TRAINING" },
+  { text: "You're not small because you don't train hard. You're small because you don't eat enough. Fix it.", tag: "TRUTH" },
+  { text: "Sattu + milk = 25g protein for ₹10. That's the hostel hack right there.", tag: "BUDGET WIN" },
+  { text: "One missed day isn't failure. Missing a week is. Show up today.", tag: "DISCIPLINE" },
+  { text: "Arms showing shape already. Consistency for 3 more months = visible difference.", tag: "GAINS LOADING" },
+  { text: "Kip-up is coordination, not strength. Slow it down, nail the timing, then explode.", tag: "SKILL" },
+  { text: "Rest day = growth day. Muscles don't grow in the gym. They grow while you sleep and eat.", tag: "RECOVERY" },
+  { text: "Your shoulders are developing. Pike push-ups + overhead work = the width you want.", tag: "SHOULDER GOAL" },
+  { text: "Weighted pull-ups with a backpack? That's creative. That's resourceful. That's you.", tag: "HUSTLE" },
+  { text: "Hit your protein first. Everything else — carbs, fat — will fall into place.", tag: "PRIORITY" },
+  { text: "Handstand push-ups are months away. Wall holds are the foundation. Build it.", tag: "FOUNDATION" },
+  { text: "The V-taper you want starts with lat width. Pull-ups today are a direct deposit.", tag: "AESTHETICS" },
+  { text: "53 kg is just 10 consistent weeks away if you eat right every day.", tag: "MATH CHECK" },
+  { text: "Chest thickness = full range push-ups + progressive overload. No gym needed.", tag: "CHEST GOAL" },
+  { text: "You have 10 pull-ups at 50kg. That's impressive. Now fuel the body to do more.", tag: "STRENGTH" },
+  { text: "One banana + milk shake = 400 easy calories. Never skip it.", tag: "CALORIES" },
+  { text: "What you do consistently for 6 months is what your body becomes. Stay consistent.", tag: "BIG PICTURE" },
+];
+
+const XP_REWARDS = {
+  logFood: 10,
+  hitProtein: 50,
+  hitCalories: 30,
+  streak3: 100,
+  streak7: 250,
+};
+
+const LEVELS = [
+  { name: "Beginner", min: 0, max: 200, color: "#888" },
+  { name: "Trainee", min: 200, max: 500, color: "#f59e0b" },
+  { name: "Athlete", min: 500, max: 1000, color: "#7c6af7" },
+  { name: "Beast Mode", min: 1000, max: 2000, color: "#3ecf8e" },
+  { name: "Elite", min: 2000, max: 99999, color: "#ff6b35" },
+];
+
+function getLevel(xp) {
+  return LEVELS.findLast(l => xp >= l.min) || LEVELS[0];
+}
+
+function getDayOfYear() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), 0, 0);
+  return Math.floor((now - start) / 86400000);
+}
+
+function getTodayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function loadFromStorage(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+  catch { return fallback; }
+}
+
+function saveToStorage(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+}
+
+function calcStreak(history) {
+  let streak = 0;
+  const today = getTodayKey();
+  let d = new Date();
+  while (true) {
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const day = history[key];
+    if (!day) break;
+    if ((day.protein || 0) >= 80) streak++;
+    else break;
+    d.setDate(d.getDate() - 1);
+  }
+  return streak;
+}
+
+function BarChart({ data, targetLine, color, label }) {
+  const maxVal = Math.max(...data.map(d => d.value), targetLine * 1.1, 1);
+  const w = 300, h = 110, barW = 28, gap = 10, leftPad = 30, bottomPad = 22;
+  const chartH = h - bottomPad;
+  const targetY = chartH - (targetLine / maxVal) * chartH;
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ fontSize: 10, color: "#555", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{label}</div>
+      <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ overflow: "visible" }}>
+        <line x1={leftPad} y1={targetY} x2={w} y2={targetY} stroke="#3ecf8e" strokeWidth="1" strokeDasharray="4,3" opacity="0.4" />
+        <text x={leftPad - 2} y={targetY + 4} fill="#3ecf8e" fontSize="7" textAnchor="end" opacity="0.6">{targetLine}</text>
+        {data.map((d, i) => {
+          const x = leftPad + i * (barW + gap);
+          const bH = Math.max(2, (d.value / maxVal) * chartH);
+          const y = chartH - bH;
+          const p = Math.round((d.value / targetLine) * 100);
+          const bc = p >= 90 ? "#3ecf8e" : p >= 60 ? "#f59e0b" : "#ef4444";
+          return (
+            <g key={i}>
+              <rect x={x} y={y} width={barW} height={bH} fill={bc} rx="3" opacity={d.isToday ? 1 : 0.5} />
+              {d.isToday && <rect x={x} y={y} width={barW} height={bH} fill="url(#shine)" rx="3" opacity="0.3" />}
+              <text x={x+barW/2} y={h-6} fill={d.isToday ? "#ccc" : "#444"} fontSize="8" textAnchor="middle">{d.label}</text>
+              {d.value > 0 && <text x={x+barW/2} y={y-3} fill={bc} fontSize="7" textAnchor="middle">{d.value}</text>}
+            </g>
+          );
+        })}
+        <defs>
+          <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="white" stopOpacity="0.4"/>
+            <stop offset="100%" stopColor="white" stopOpacity="0"/>
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
+  );
+}
+
+function XPToast({ xp, label, onDone }) {
+  useEffect(() => { const t = setTimeout(onDone, 2000); return () => clearTimeout(t); }, []);
+  return (
+    <div style={{
+      position: "fixed", top: 80, left: "50%", transform: "translateX(-50%)",
+      background: "#3ecf8e", color: "#000", padding: "8px 18px", borderRadius: 20,
+      fontWeight: 700, fontSize: 13, zIndex: 999, boxShadow: "0 4px 20px rgba(62,207,142,0.4)",
+      animation: "slideDown 0.3s ease"
+    }}>
+      +{xp} XP — {label} 🎯
+    </div>
+  );
+}
+
+function AriesTrainer() {
+  const todayKey = getTodayKey();
+  const todayMotivation = DAILY_MOTIVATIONS[getDayOfYear() % DAILY_MOTIVATIONS.length];
+
+  const [tab, setTab] = useState(0);
+  const [foodLog, setFoodLog] = useState(() => loadFromStorage(`food-${todayKey}`, []));
+  const [foodInput, setFoodInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [chatHistory, setChatHistory] = useState([]);
+  const [coachInput, setCoachInput] = useState("");
+  const [coachLoading, setCoachLoading] = useState(false);
+  const [selectedDay, setSelectedDay] = useState(new Date().getDay() === 0 ? 6 : new Date().getDay() - 1);
+  const [history, setHistory] = useState(() => loadFromStorage("macro-history", {}));
+  const [xp, setXp] = useState(() => loadFromStorage("aries-xp", 0));
+  const [toast, setToast] = useState(null);
+  const [xpAwarded, setXpAwarded] = useState(() => loadFromStorage(`xp-awarded-${todayKey}`, {}));
+  const chatEndRef = useRef(null);
+
+  const todayTotals = foodLog.reduce((acc, e) => ({
+    calories: acc.calories + (e.macros?.calories || 0),
+    protein: acc.protein + (e.macros?.protein || 0),
+    carbs: acc.carbs + (e.macros?.carbs || 0),
+    fat: acc.fat + (e.macros?.fat || 0),
+  }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+
+  const streak = calcStreak({ ...history, [todayKey]: todayTotals });
+  const level = getLevel(xp);
+  const nextLevel = LEVELS[LEVELS.indexOf(level) + 1];
+
+  function awardXP(amount, label, key) {
+    if (xpAwarded[key]) return;
+    const newXpAwarded = { ...xpAwarded, [key]: true };
+    setXpAwarded(newXpAwarded);
+    saveToStorage(`xp-awarded-${todayKey}`, newXpAwarded);
+    setXp(prev => { const n = prev + amount; saveToStorage("aries-xp", n); return n; });
+    setToast({ xp: amount, label });
+  }
+
+  useEffect(() => {
+    saveToStorage(`food-${todayKey}`, foodLog);
+    const totals = foodLog.reduce((acc, e) => ({
+      calories: acc.calories + (e.macros?.calories || 0),
+      protein: acc.protein + (e.macros?.protein || 0),
+      carbs: acc.carbs + (e.macros?.carbs || 0),
+      fat: acc.fat + (e.macros?.fat || 0),
+    }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+    setHistory(prev => {
+      const updated = { ...prev, [todayKey]: { ...totals, date: todayKey } };
+      saveToStorage("macro-history", updated);
+      return updated;
+    });
+    // Award XP for hitting targets
+    if (totals.protein >= 80) awardXP(XP_REWARDS.hitProtein, "Protein Target Hit!", "protein-hit");
+    if (totals.calories >= 2500) awardXP(XP_REWARDS.hitCalories, "Calorie Goal Reached!", "calorie-hit");
+    if (streak >= 7) awardXP(XP_REWARDS.streak7, "7-Day Streak! 🔥", "streak7");
+    else if (streak >= 3) awardXP(XP_REWARDS.streak3, "3-Day Streak!", "streak3");
+  }, [foodLog]);
+
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatHistory]);
+
+  async function logFood() {
+    if (!foodInput.trim()) return;
+    setLoading(true);
+    const foodText = foodInput;
+    setFoodInput("");
+    const entry = {
+      food: foodText,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      macros: null, note: "", id: Date.now()
+    };
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6", max_tokens: 1000, system: SYSTEM_PROMPT,
+          messages: [{ role: "user", content: `Estimate macros ONLY for this specific food: "${foodText}". Respond ONLY in JSON, no markdown:\n{"calories":<n>,"protein":<n>,"carbs":<n>,"fat":<n>,"note":"<1-2 line casual coach note>"}` }]
+        })
+      });
+      const data = await res.json();
+      const parsed = JSON.parse(data.content?.[0]?.text?.replace(/```json|```/g,"").trim() || "{}");
+      entry.macros = { calories: Math.round(parsed.calories||0), protein: Math.round(parsed.protein||0), carbs: Math.round(parsed.carbs||0), fat: Math.round(parsed.fat||0) };
+      entry.note = parsed.note || "";
+    } catch {
+      entry.macros = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+      entry.note = "Couldn't estimate. Log manually.";
+    }
+    setFoodLog(prev => [...prev, entry]);
+    awardXP(XP_REWARDS.logFood, "Food Logged", `log-${entry.id}`);
+    setLoading(false);
+  }
+
+  async function askCoach() {
+    if (!coachInput.trim()) return;
+    setCoachLoading(true);
+    const userMsg = coachInput; setCoachInput("");
+    const newHistory = [...chatHistory, { role: "user", content: userMsg }];
+    setChatHistory(newHistory);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6", max_tokens: 1000, system: SYSTEM_PROMPT,
+          messages: [...chatHistory, { role: "user", content: `Today's log: ${foodLog.map(e=>e.food).join(", ")||"nothing yet"}. Totals: ${todayTotals.calories}kcal, ${todayTotals.protein}g protein. Question: ${userMsg}` }]
+        })
+      });
+      const data = await res.json();
+      setChatHistory([...newHistory, { role: "assistant", content: data.content?.[0]?.text || "Try again." }]);
+    } catch { setChatHistory([...newHistory, { role: "assistant", content: "API error. Try again." }]); }
+    setCoachLoading(false);
+  }
+
+  function removeFood(id) { setFoodLog(prev => prev.filter(e => e.id !== id)); }
+  const pct = (v, t) => Math.min(100, Math.round((v/t)*100));
+
+  function getLast7Days(macro) {
+    return Array.from({length:7},(_,i)=>{
+      const d = new Date(); d.setDate(d.getDate()-(6-i));
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      return { label: ["Su","Mo","Tu","We","Th","Fr","Sa"][d.getDay()], value: Math.round(history[key]?.[macro]||0), isToday: key===todayKey };
+    });
+  }
+
+  const MacroBar = ({ label, value, target, color }) => (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+        <span style={{ color: "#ccc", fontWeight: 600 }}>{label}</span>
+        <span style={{ color }}>{value}<span style={{ color: "#444" }}>/{target}{label==="Calories"?" kcal":"g"}</span></span>
+      </div>
+      <div style={{ height: 7, background: "#1a1a1a", borderRadius: 4, overflow: "hidden" }}>
+        <div style={{ height:"100%", width:`${pct(value,target)}%`, background:color, borderRadius:4, transition:"width 0.6s ease" }}/>
+      </div>
+    </div>
+  );
+
+  const todayWorkout = WEEK_SCHEDULE[selectedDay];
+  const workout = WORKOUT_PLAN[todayWorkout];
+
+  return (
+    <div style={{ background:"#0a0a0a", minHeight:"100vh", fontFamily:"'Inter',system-ui,sans-serif", color:"#f0f0f0", maxWidth:480, margin:"0 auto" }}>
+      <style>{`@keyframes slideDown{from{opacity:0;transform:translate(-50%,-10px)}to{opacity:1;transform:translate(-50%,0)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}`}</style>
+
+      {toast && <XPToast xp={toast.xp} label={toast.label} onDone={()=>setToast(null)}/>}
+
+      {/* ── HEADER ── */}
+      <div style={{ padding:"16px 16px 0", borderBottom:"1px solid #1a1a1a" }}>
+
+        {/* Top row */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+          <div>
+            <div style={{ fontSize:9, color:"#444", letterSpacing:2, textTransform:"uppercase", marginBottom:2 }}>Personal Trainer</div>
+            <div style={{ fontSize:20, fontWeight:700, letterSpacing:-0.5 }}>Aries <span style={{ color:"#3ecf8e" }}>↗</span></div>
+          </div>
+          {/* XP + Level */}
+          <div style={{ textAlign:"right" }}>
+            <div style={{ fontSize:10, color:level.color, fontWeight:700, letterSpacing:0.5 }}>{level.name}</div>
+            <div style={{ fontSize:12, color:"#f0f0f0", fontWeight:700 }}>{xp} XP</div>
+            {nextLevel && (
+              <div style={{ width:80, height:3, background:"#1a1a1a", borderRadius:2, marginTop:3, overflow:"hidden" }}>
+                <div style={{ height:"100%", width:`${Math.round(((xp-level.min)/(nextLevel.min-level.min))*100)}%`, background:level.color, borderRadius:2 }}/>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Daily motivation */}
+        <div style={{ background:"#0d1a14", border:"1px solid #1a3326", borderRadius:10, padding:"10px 12px", marginBottom:10 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+            <div style={{ fontSize:12, color:"#c8f0dd", lineHeight:1.5, flex:1 }}>"{todayMotivation.text}"</div>
+            <div style={{ fontSize:9, color:"#3ecf8e", background:"#0a2618", padding:"2px 7px", borderRadius:10, border:"1px solid #1a4028", whiteSpace:"nowrap", fontWeight:700, letterSpacing:0.5 }}>{todayMotivation.tag}</div>
+          </div>
+        </div>
+
+        {/* Streak + macros row */}
+        <div style={{ display:"flex", gap:6, marginBottom:10 }}>
+          <div style={{ background:"#1a0f00", border:"1px solid #3a2000", borderRadius:8, padding:"7px 10px", textAlign:"center", minWidth:60 }}>
+            <div style={{ fontSize:18, lineHeight:1 }}>🔥</div>
+            <div style={{ fontSize:14, fontWeight:700, color:"#ff6b35" }}>{streak}</div>
+            <div style={{ fontSize:8, color:"#555", textTransform:"uppercase" }}>streak</div>
+          </div>
+          {[
+            { label:"kcal", val:todayTotals.calories, target:MACROS_TARGET.calories, color:"#3ecf8e" },
+            { label:"protein", val:todayTotals.protein, target:MACROS_TARGET.protein, color:"#7c6af7" },
+            { label:"carbs", val:todayTotals.carbs, target:MACROS_TARGET.carbs, color:"#f59e0b" },
+            { label:"fat", val:todayTotals.fat, target:MACROS_TARGET.fat, color:"#ef4444" },
+          ].map(m=>(
+            <div key={m.label} style={{ flex:1, background:"#111", borderRadius:8, padding:"6px 3px", textAlign:"center", border:"1px solid #1c1c1c" }}>
+              <div style={{ fontSize:13, fontWeight:700, color:m.color }}>{m.val}</div>
+              <div style={{ fontSize:7, color:"#444", textTransform:"uppercase", letterSpacing:0.3 }}>{m.label}</div>
+              <div style={{ height:3, background:"#1a1a1a", borderRadius:2, marginTop:2, overflow:"hidden" }}>
+                <div style={{ height:"100%", width:`${pct(m.val,m.target)}%`, background:m.color, borderRadius:2 }}/>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Tabs */}
+        <div style={{ display:"flex", overflowX:"auto", scrollbarWidth:"none", gap:0 }}>
+          {TABS.map((t,i)=>(
+            <button key={t} onClick={()=>setTab(i)} style={{
+              flexShrink:0, padding:"9px 10px", fontSize:11, fontWeight:600, border:"none", cursor:"pointer",
+              background:"none", color:tab===i?"#3ecf8e":"#444",
+              borderBottom:tab===i?"2px solid #3ecf8e":"2px solid transparent",
+              transition:"all 0.2s", whiteSpace:"nowrap"
+            }}>{t}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ padding:14 }}>
+
+        {/* ── LOG FOOD ── */}
+        {tab===0 && (
+          <div>
+            <div style={{ fontSize:11, color:"#444", marginBottom:10 }}>Be specific with quantity for better estimates.</div>
+            <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+              <input value={foodInput} onChange={e=>setFoodInput(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&!loading&&logFood()}
+                placeholder="e.g. 50g soy chunks + 2 rotis + dal"
+                style={{ flex:1, padding:"11px 13px", background:"#111", border:"1px solid #222", borderRadius:8, color:"#f0f0f0", fontSize:13, outline:"none" }}/>
+              <button onClick={logFood} disabled={loading} style={{
+                padding:"11px 16px", background:loading?"#1a1a1a":"#3ecf8e", color:loading?"#444":"#000",
+                border:"none", borderRadius:8, fontWeight:700, cursor:loading?"not-allowed":"pointer", fontSize:13, minWidth:56
+              }}>{loading?"…":"Log"}</button>
+            </div>
+
+            {/* Quick add chips */}
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:14 }}>
+              {["Morning shake","50g soy chunks","2 rotis + dal","300ml milk","1 banana","Sattu 60g"].map(q=>(
+                <button key={q} onClick={()=>setFoodInput(q)} style={{
+                  padding:"5px 10px", background:"#111", border:"1px solid #222", borderRadius:20,
+                  color:"#666", fontSize:11, cursor:"pointer"
+                }}>{q}</button>
+              ))}
+            </div>
+
+            {foodLog.length===0 && (
+              <div style={{ textAlign:"center", padding:"36px 0", color:"#2a2a2a", fontSize:13 }}>
+                Nothing logged yet.<br/>Start with your 7:30 AM shake. +10 XP 👆
+              </div>
+            )}
+
+            {[...foodLog].reverse().map(entry=>(
+              <div key={entry.id} style={{ background:"#111", border:"1px solid #1c1c1c", borderRadius:10, padding:12, marginBottom:8 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:7 }}>
+                  <div style={{ flex:1, paddingRight:8 }}>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{entry.food}</div>
+                    <div style={{ fontSize:10, color:"#444", marginTop:1 }}>{entry.time}</div>
+                  </div>
+                  <button onClick={()=>removeFood(entry.id)} style={{ background:"none", border:"none", color:"#2a2a2a", cursor:"pointer", fontSize:14, padding:0 }}>✕</button>
+                </div>
+                {entry.macros && (
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:5, marginBottom:entry.note?7:0 }}>
+                    {[{label:"kcal",val:entry.macros.calories,color:"#3ecf8e"},{label:"pro",val:entry.macros.protein+"g",color:"#7c6af7"},{label:"carbs",val:entry.macros.carbs+"g",color:"#f59e0b"},{label:"fat",val:entry.macros.fat+"g",color:"#ef4444"}].map(m=>(
+                      <div key={m.label} style={{ textAlign:"center", background:"#0a0a0a", borderRadius:6, padding:"5px 2px" }}>
+                        <div style={{ fontSize:13, fontWeight:700, color:m.color }}>{m.val}</div>
+                        <div style={{ fontSize:8, color:"#444", textTransform:"uppercase" }}>{m.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {entry.note && <div style={{ fontSize:11, color:"#666", borderTop:"1px solid #1a1a1a", paddingTop:6, lineHeight:1.5 }}>{entry.note}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── TODAY ── */}
+        {tab===1 && (
+          <div>
+            <div style={{ background:"#111", border:"1px solid #1c1c1c", borderRadius:12, padding:14, marginBottom:12 }}>
+              <MacroBar label="Calories" value={todayTotals.calories} target={MACROS_TARGET.calories} color="#3ecf8e"/>
+              <MacroBar label="Protein" value={todayTotals.protein} target={MACROS_TARGET.protein} color="#7c6af7"/>
+              <MacroBar label="Carbs" value={todayTotals.carbs} target={MACROS_TARGET.carbs} color="#f59e0b"/>
+              <MacroBar label="Fat" value={todayTotals.fat} target={MACROS_TARGET.fat} color="#ef4444"/>
+            </div>
+
+            <div style={{ background:"#111", border:"1px solid #1c1c1c", borderRadius:12, padding:14, marginBottom:12 }}>
+              <div style={{ fontSize:10, color:"#444", textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>Still need</div>
+              {[
+                {label:"Calories",rem:Math.max(0,MACROS_TARGET.calories-todayTotals.calories),unit:"kcal",color:"#3ecf8e"},
+                {label:"Protein",rem:Math.max(0,MACROS_TARGET.protein-todayTotals.protein),unit:"g",color:"#7c6af7"},
+                {label:"Carbs",rem:Math.max(0,MACROS_TARGET.carbs-todayTotals.carbs),unit:"g",color:"#f59e0b"},
+                {label:"Fat",rem:Math.max(0,MACROS_TARGET.fat-todayTotals.fat),unit:"g",color:"#ef4444"},
+              ].map(m=>(
+                <div key={m.label} style={{ display:"flex", justifyContent:"space-between", marginBottom:7, fontSize:13 }}>
+                  <span style={{ color:"#666" }}>{m.label}</span>
+                  <span style={{ color:m.rem===0?"#3ecf8e":m.color, fontWeight:600 }}>{m.rem===0?"✓ Hit":`${m.rem} ${m.unit} left`}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* XP Progress */}
+            <div style={{ background:"#0f0f1a", border:"1px solid #1a1a2e", borderRadius:12, padding:14, marginBottom:12 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+                <div style={{ fontSize:11, color:"#7c6af7", fontWeight:700 }}>Level: {level.name}</div>
+                <div style={{ fontSize:11, color:"#444" }}>{xp} XP {nextLevel?`/ ${nextLevel.min} XP`:""}</div>
+              </div>
+              {nextLevel && (
+                <div style={{ height:6, background:"#1a1a1a", borderRadius:3, overflow:"hidden" }}>
+                  <div style={{ height:"100%", width:`${Math.round(((xp-level.min)/(nextLevel.min-level.min))*100)}%`, background:"#7c6af7", borderRadius:3, transition:"width 0.6s" }}/>
+                </div>
+              )}
+              <div style={{ fontSize:10, color:"#333", marginTop:6 }}>Log food +10 · Hit protein +50 · Hit calories +30 · 7-day streak +250</div>
+            </div>
+
+            <div style={{ background:"#0d1a14", border:"1px solid #1a3326", borderRadius:12, padding:12 }}>
+              <div style={{ fontSize:10, color:"#3ecf8e", textTransform:"uppercase", letterSpacing:1, marginBottom:5 }}>Coach Note</div>
+              <div style={{ fontSize:12, color:"#999", lineHeight:1.6 }}>
+                {todayTotals.protein>=80?"Protein hit ✓ This is exactly how you gain. Keep streak alive tomorrow."
+                  :todayTotals.protein>=50?`${todayTotals.protein}g protein so far. ${MACROS_TARGET.protein-todayTotals.protein}g left — soy chunks or sattu before bed.`
+                  :"Protein is low. Dal + soy chunks + milk at every meal. Food is your biggest lever right now."}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── HISTORY ── */}
+        {tab===2 && (
+          <div>
+            <div style={{ fontSize:11, color:"#444", marginBottom:14 }}>Last 7 days. Green = hit target. Yellow = getting there. Red = missed.</div>
+            <div style={{ background:"#111", border:"1px solid #1c1c1c", borderRadius:12, padding:14, marginBottom:10 }}>
+              <BarChart data={getLast7Days("calories")} targetLine={MACROS_TARGET.calories} label="Calories (kcal)"/>
+              <BarChart data={getLast7Days("protein")} targetLine={MACROS_TARGET.protein} label="Protein (g)"/>
+            </div>
+            <div style={{ background:"#111", border:"1px solid #1c1c1c", borderRadius:12, padding:14, marginBottom:10 }}>
+              <BarChart data={getLast7Days("carbs")} targetLine={MACROS_TARGET.carbs} label="Carbs (g)"/>
+              <BarChart data={getLast7Days("fat")} targetLine={MACROS_TARGET.fat} label="Fat (g)"/>
+            </div>
+            <div style={{ fontSize:10, color:"#444", textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>Daily Log</div>
+            {Object.entries(history).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,14).map(([key,day])=>{
+              const d = new Date(key+"T00:00:00");
+              const lbl = key===todayKey?"Today":d.toLocaleDateString("en-IN",{weekday:"short",day:"numeric",month:"short"});
+              const cp = pct(day.calories||0,MACROS_TARGET.calories);
+              const pp = pct(day.protein||0,MACROS_TARGET.protein);
+              return (
+                <div key={key} style={{ background:"#111", border:"1px solid #1c1c1c", borderRadius:10, padding:11, marginBottom:7 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+                    <span style={{ fontWeight:600, fontSize:13, color:key===todayKey?"#3ecf8e":"#ccc" }}>{lbl}</span>
+                    <span style={{ fontSize:11, color:"#444" }}>{Math.round(day.calories||0)} kcal · {Math.round(day.protein||0)}g pro</span>
+                  </div>
+                  <div style={{ display:"flex", gap:6 }}>
+                    {[{label:"Cal",p:cp,c:"#3ecf8e"},{label:"Pro",p:pp,c:"#7c6af7"}].map(m=>(
+                      <div key={m.label} style={{ flex:1 }}>
+                        <div style={{ fontSize:9, color:"#444", marginBottom:2 }}>{m.label} {m.p}%</div>
+                        <div style={{ height:4, background:"#1a1a1a", borderRadius:2, overflow:"hidden" }}>
+                          <div style={{ height:"100%", width:`${m.p}%`, background:m.p>=90?m.c:m.p>=60?"#f59e0b":"#ef4444", borderRadius:2 }}/>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            {Object.keys(history).length===0&&<div style={{ color:"#2a2a2a", fontSize:13, textAlign:"center", padding:"30px 0" }}>No history yet. Start logging.</div>}
+          </div>
+        )}
+
+        {/* ── COACH ── */}
+        {tab===3 && (
+          <div style={{ display:"flex", flexDirection:"column", height:"calc(100vh - 260px)" }}>
+            <div style={{ flex:1, overflowY:"auto", paddingBottom:10 }}>
+              {chatHistory.length===0 && (
+                <div style={{ color:"#2a2a2a", fontSize:12, textAlign:"center", paddingTop:30 }}>
+                  Your coach knows your full profile,<br/>today's food log, and your goals.<br/>Ask anything.
+                </div>
+              )}
+              {chatHistory.map((msg,i)=>(
+                <div key={i} style={{ marginBottom:10, display:"flex", flexDirection:msg.role==="user"?"row-reverse":"row" }}>
+                  {msg.role==="assistant"&&<div style={{ width:28, height:28, borderRadius:14, background:"#0d1a14", border:"1px solid #1a3326", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, flexShrink:0, marginRight:8 }}>🏋️</div>}
+                  <div style={{ maxWidth:"82%", padding:"10px 13px", borderRadius:12, background:msg.role==="user"?"#3ecf8e":"#111", color:msg.role==="user"?"#000":"#ddd", fontSize:13, lineHeight:1.6, border:msg.role==="assistant"?"1px solid #1c1c1c":"none" }}>{msg.content}</div>
+                </div>
+              ))}
+              {coachLoading&&<div style={{ display:"flex", alignItems:"center", gap:8 }}><div style={{ width:28, height:28, borderRadius:14, background:"#0d1a14", border:"1px solid #1a3326", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12 }}>🏋️</div><div style={{ padding:"10px 13px", background:"#111", borderRadius:12, border:"1px solid #1c1c1c", color:"#444", fontSize:13 }}>Thinking…</div></div>}
+              <div ref={chatEndRef}/>
+            </div>
+            <div style={{ display:"flex", gap:8, paddingTop:10, borderTop:"1px solid #1a1a1a" }}>
+              <input value={coachInput} onChange={e=>setCoachInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!coachLoading&&askCoach()} placeholder="Ask your coach…" style={{ flex:1, padding:"11px 13px", background:"#111", border:"1px solid #222", borderRadius:8, color:"#f0f0f0", fontSize:13, outline:"none" }}/>
+              <button onClick={askCoach} disabled={coachLoading} style={{ padding:"11px 15px", background:coachLoading?"#1a1a1a":"#3ecf8e", color:coachLoading?"#444":"#000", border:"none", borderRadius:8, fontWeight:700, cursor:coachLoading?"not-allowed":"pointer", fontSize:14 }}>{coachLoading?"…":"→"}</button>
+            </div>
+          </div>
+        )}
+
+        {/* ── WORKOUT ── */}
+        {tab===4 && (
+          <div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, marginBottom:16 }}>
+              {DAYS.map((d,i)=>(
+                <button key={d} onClick={()=>setSelectedDay(i)} style={{ padding:"7px 0", background:selectedDay===i?"#3ecf8e":"#111", color:selectedDay===i?"#000":"#444", border:"1px solid #1c1c1c", borderRadius:6, fontSize:10, fontWeight:700, cursor:"pointer", textAlign:"center" }}>
+                  <div>{d}</div>
+                  <div style={{ fontSize:7, marginTop:1, color:selectedDay===i?"#004d2e":"#2a2a2a" }}>{WEEK_SCHEDULE[i]}</div>
+                </button>
+              ))}
+            </div>
+
+            {todayWorkout==="Rest" ? (
+              <div style={{ background:"#111", border:"1px solid #1c1c1c", borderRadius:12, padding:24, textAlign:"center" }}>
+                <div style={{ fontSize:32, marginBottom:8 }}>😴</div>
+                <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>Rest Day</div>
+                <div style={{ color:"#444", fontSize:12, lineHeight:1.6 }}>Muscles grow on rest days, not training days.<br/>Eat your calories. Sleep 7-8 hours.<br/>Come back stronger tomorrow.</div>
+              </div>
+            ) : (
+              <div>
+                <div style={{ background:"#0d1a14", border:"1px solid #1a3326", borderRadius:12, padding:14, marginBottom:14 }}>
+                  <div style={{ fontSize:18, marginBottom:4 }}>{workout.emoji}</div>
+                  <div style={{ fontWeight:700, fontSize:16, marginBottom:2 }}>{workout.day}</div>
+                  <div style={{ fontSize:11, color:"#3ecf8e" }}>{workout.focus}</div>
+                </div>
+                {workout.exercises.map((ex,i)=>(
+                  <div key={i} style={{ background:"#111", border:"1px solid #1c1c1c", borderRadius:10, padding:12, marginBottom:7 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                      <div style={{ fontWeight:600, fontSize:13 }}>{ex.emoji} {ex.name}</div>
+                      <div style={{ fontSize:11, color:"#3ecf8e", fontWeight:700 }}>{ex.sets} × {ex.reps}</div>
+                    </div>
+                    <div style={{ fontSize:11, color:"#444" }}>{ex.note}</div>
+                  </div>
+                ))}
+                <div style={{ background:"#0d1a14", border:"1px solid #1a3326", borderRadius:10, padding:11, marginTop:10 }}>
+                  <div style={{ fontSize:10, color:"#3ecf8e", marginBottom:3, textTransform:"uppercase", letterSpacing:1 }}>Rules</div>
+                  <div style={{ fontSize:11, color:"#777", lineHeight:1.6 }}>Stop 2 reps before failure · Pain ≠ soreness · Eat within 30 min after · Log your food today</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(AriesTrainer));
